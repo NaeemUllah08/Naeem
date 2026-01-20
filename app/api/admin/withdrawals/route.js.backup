@@ -1,0 +1,182 @@
+import { NextResponse } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase'
+import { adminMiddleware } from '@/lib/middleware'
+
+export const dynamic = 'force-dynamic'
+
+export async function GET(req) {
+  try {
+    const authResult = await adminMiddleware(req)
+    if (authResult.error) {
+      return NextResponse.json(
+        { error: authResult.error },
+        { status: authResult.status }
+      )
+    }
+
+    // Fetch all withdrawals with user information
+    const { data: withdrawals, error } = await supabaseAdmin
+      .from('withdrawals')
+      .select(`
+        id,
+        user_id,
+        amount,
+        payment_method,
+        account_details,
+        status,
+        transaction_id,
+        created_at,
+        updated_at,
+        users (
+          name,
+          email
+        )
+      `)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching withdrawals:', error)
+      return NextResponse.json(
+        { error: 'Failed to fetch withdrawals' },
+        { status: 500 }
+      )
+    }
+
+    // Format the response
+    const formattedWithdrawals = withdrawals.map(withdrawal => ({
+      id: withdrawal.id,
+      userId: withdrawal.user_id,
+      userName: withdrawal.users?.name || 'Unknown',
+      userEmail: withdrawal.users?.email || 'Unknown',
+      amount: withdrawal.amount,
+      payment_method: withdrawal.payment_method,
+      account_details: withdrawal.account_details,
+      status: withdrawal.status,
+      transaction_id: withdrawal.transaction_id,
+      created_at: withdrawal.created_at,
+      updated_at: withdrawal.updated_at
+    }))
+
+    return NextResponse.json({ withdrawals: formattedWithdrawals })
+  } catch (error) {
+    console.error('Admin withdrawals API error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PATCH(req) {
+  try {
+    const authResult = await adminMiddleware(req)
+    if (authResult.error) {
+      return NextResponse.json(
+        { error: authResult.error },
+        { status: authResult.status }
+      )
+    }
+
+    const { withdrawalId, status } = await req.json()
+
+    if (!withdrawalId || !status) {
+      return NextResponse.json(
+        { error: 'Withdrawal ID and status are required' },
+        { status: 400 }
+      )
+    }
+
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
+      return NextResponse.json(
+        { error: 'Invalid status' },
+        { status: 400 }
+      )
+    }
+
+    // Get withdrawal details
+    const { data: withdrawal, error: fetchError } = await supabaseAdmin
+      .from('withdrawals')
+      .select('id, user_id, amount, status')
+      .eq('id', withdrawalId)
+      .single()
+
+    if (fetchError || !withdrawal) {
+      return NextResponse.json(
+        { error: 'Withdrawal not found' },
+        { status: 404 }
+      )
+    }
+
+    // Update withdrawal status
+    const { error: updateError } = await supabaseAdmin
+      .from('withdrawals')
+      .update({
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', withdrawalId)
+
+    if (updateError) {
+      console.error('Error updating withdrawal:', updateError)
+      return NextResponse.json(
+        { error: 'Failed to update withdrawal status' },
+        { status: 500 }
+      )
+    }
+
+    // If rejecting, refund the amount to wallet
+    if (status === 'rejected' && withdrawal.status === 'pending') {
+      // Get current wallet balance
+      const { data: wallet, error: walletFetchError } = await supabaseAdmin
+        .from('wallets')
+        .select('balance')
+        .eq('user_id', withdrawal.user_id)
+        .single()
+
+      if (walletFetchError) {
+        console.error('Error fetching wallet:', walletFetchError)
+        return NextResponse.json(
+          { error: 'Failed to refund wallet balance' },
+          { status: 500 }
+        )
+      }
+
+      const currentBalance = parseFloat(wallet?.balance || 0)
+      const newBalance = currentBalance + parseFloat(withdrawal.amount)
+
+      // Update wallet balance
+      const { error: walletUpdateError } = await supabaseAdmin
+        .from('wallets')
+        .update({
+          balance: newBalance,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', withdrawal.user_id)
+
+      if (walletUpdateError) {
+        console.error('Error updating wallet:', walletUpdateError)
+        return NextResponse.json(
+          { error: 'Failed to refund wallet balance' },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Withdrawal rejected and amount refunded to wallet',
+        newBalance
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Withdrawal ${status} successfully`
+    })
+  } catch (error) {
+    console.error('Admin withdrawals PATCH error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}

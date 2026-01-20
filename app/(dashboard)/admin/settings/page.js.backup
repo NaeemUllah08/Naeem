@@ -1,0 +1,462 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import Card from '@/components/ui/Card'
+import toast from 'react-hot-toast'
+import { supabase } from '@/lib/supabase'
+
+export default function AdminSettingsPage() {
+  const [adminInfo, setAdminInfo] = useState(null)
+  const [paymentGateways, setPaymentGateways] = useState([])
+  const [editingGateway, setEditingGateway] = useState(null)
+  const [showGatewayForm, setShowGatewayForm] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const [gatewayFormData, setGatewayFormData] = useState({
+    name: '',
+    accountTitle: '',
+    accountNumber: '',
+    logo: null,
+    isActive: true
+  })
+
+  useEffect(() => {
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    setAdminInfo(user)
+    fetchPaymentGateways()
+  }, [])
+
+  const fetchPaymentGateways = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payment_gateways')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      setPaymentGateways(data || [])
+    } catch (error) {
+      console.error('Error fetching payment gateways:', error)
+    }
+  }
+
+  const handleCreateGateway = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      let logoPath = null
+
+      // Upload logo if provided
+      if (gatewayFormData.logo) {
+        const fileExt = gatewayFormData.logo.name.split('.').pop()
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
+        const filePath = `gateway-logos/${fileName}`
+
+        const { error: uploadError } = await supabase.storage
+          .from('uploads')
+          .upload(filePath, gatewayFormData.logo)
+
+        if (uploadError) throw uploadError
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('uploads')
+          .getPublicUrl(filePath)
+
+        logoPath = publicUrl
+      }
+
+      const { data, error } = await supabase
+        .from('payment_gateways')
+        .insert([{
+          name: gatewayFormData.name,
+          account_title: gatewayFormData.accountTitle,
+          account_number: gatewayFormData.accountNumber,
+          logo_url: logoPath,
+          is_active: gatewayFormData.isActive
+        }])
+        .select()
+        .single()
+
+      if (error) throw error
+
+      toast.success('Payment gateway created successfully!')
+      resetForm()
+      fetchPaymentGateways()
+    } catch (error) {
+      toast.error('Failed to create payment gateway')
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleUpdateGateway = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      let logoPath = editingGateway.logo_url
+
+      // Upload new logo if provided
+      if (gatewayFormData.logo) {
+        const fileExt = gatewayFormData.logo.name.split('.').pop()
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
+        const filePath = `gateway-logos/${fileName}`
+
+        const { error: uploadError } = await supabase.storage
+          .from('uploads')
+          .upload(filePath, gatewayFormData.logo)
+
+        if (uploadError) throw uploadError
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('uploads')
+          .getPublicUrl(filePath)
+
+        logoPath = publicUrl
+      }
+
+      const { data, error } = await supabase
+        .from('payment_gateways')
+        .update({
+          name: gatewayFormData.name,
+          account_title: gatewayFormData.accountTitle,
+          account_number: gatewayFormData.accountNumber,
+          logo_url: logoPath,
+          is_active: gatewayFormData.isActive
+        })
+        .eq('id', editingGateway.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      toast.success('Payment gateway updated successfully!')
+      resetForm()
+      fetchPaymentGateways()
+    } catch (error) {
+      toast.error('Failed to update payment gateway')
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteGateway = async (id, name) => {
+    if (!confirm(`Are you sure you want to delete ${name}?`)) return
+
+    try {
+      const { error } = await supabase
+        .from('payment_gateways')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      toast.success('Payment gateway deleted successfully!')
+      fetchPaymentGateways()
+    } catch (error) {
+      toast.error('Failed to delete payment gateway')
+      console.error(error)
+    }
+  }
+
+  const handleToggleGateway = async (id, currentStatus) => {
+    try {
+      const { error } = await supabase
+        .from('payment_gateways')
+        .update({ is_active: !currentStatus })
+        .eq('id', id)
+
+      if (error) throw error
+
+      toast.success('Gateway status updated!')
+      fetchPaymentGateways()
+    } catch (error) {
+      toast.error('Failed to update status')
+      console.error(error)
+    }
+  }
+
+  const handleEditGateway = (gateway) => {
+    setEditingGateway(gateway)
+    setGatewayFormData({
+      name: gateway.name,
+      accountTitle: gateway.account_title,
+      accountNumber: gateway.account_number,
+      logo: null,
+      isActive: gateway.is_active
+    })
+    setShowGatewayForm(true)
+  }
+
+  const resetForm = () => {
+    setGatewayFormData({
+      name: '',
+      accountTitle: '',
+      accountNumber: '',
+      logo: null,
+      isActive: true
+    })
+    setEditingGateway(null)
+    setShowGatewayForm(false)
+  }
+
+  return (
+    <div className="w-full">
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Admin Settings</h1>
+        <p className="text-xs sm:text-sm text-gray-600 mt-1">Configure admin settings and preferences</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
+        {/* Admin Info */}
+        <Card>
+          <h2 className="text-base font-bold text-gray-800 mb-3">Administrator Information</h2>
+          <div className="space-y-2">
+            <div>
+              <p className="text-xs text-gray-600">Name</p>
+              <p className="text-sm font-semibold text-gray-800">{adminInfo?.name || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-600">Email</p>
+              <p className="text-sm font-semibold text-gray-800">{adminInfo?.email || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-600">Role</p>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                Administrator
+              </span>
+            </div>
+          </div>
+        </Card>
+
+        {/* System Info */}
+        <Card>
+          <h2 className="text-base font-bold text-gray-800 mb-3">System Configuration</h2>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-start space-x-2">
+              <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <h3 className="text-sm font-semibold text-blue-800 mb-1">Investment Plan Management Moved</h3>
+                <p className="text-xs text-blue-700 mb-2">
+                  Investment plan management is now available in the <strong>Investments</strong> section for better organization.
+                </p>
+                <p className="text-xs text-blue-600">
+                  Navigate to <strong>Investments → Manage Plans</strong> to create, edit, and manage all investment plans.
+                </p>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Payment Gateways */}
+      <Card className="mb-3 sm:mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+          <h2 className="text-sm sm:text-base font-bold text-gray-800">Payment Gateways</h2>
+          <button
+            onClick={() => {
+              setEditingGateway(null)
+              resetForm()
+              setShowGatewayForm(true)
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1.5 rounded-lg transition text-xs w-full sm:w-auto"
+          >
+            + Add Gateway
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {paymentGateways.length > 0 ? (
+            paymentGateways.map((gateway) => (
+              <div key={gateway.id} className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-all bg-white">
+                <div className="flex flex-col h-full">
+                  {/* Logo and Status */}
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {gateway.logo_url ? (
+                        <img src={gateway.logo_url} alt={gateway.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                        </svg>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleToggleGateway(gateway.id, gateway.is_active)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition ${
+                        gateway.is_active
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {gateway.is_active ? 'Active' : 'Inactive'}
+                    </button>
+                  </div>
+
+                  {/* Gateway Name */}
+                  <h3 className="text-sm font-bold text-gray-800 mb-2">{gateway.name}</h3>
+
+                  {/* Account Details */}
+                  <div className="space-y-1 mb-3 flex-grow">
+                    <div className="bg-gray-50 rounded px-2 py-1">
+                      <p className="text-xs text-gray-500">Account Title</p>
+                      <p className="text-xs font-semibold text-gray-800">{gateway.account_title}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded px-2 py-1">
+                      <p className="text-xs text-gray-500">Account Number</p>
+                      <p className="text-xs font-semibold text-gray-800">{gateway.account_number}</p>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleEditGateway(gateway)}
+                      className="flex-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteGateway(gateway.id, gateway.name)}
+                      className="flex-1 px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="col-span-full text-center py-6 text-gray-500 text-sm">
+              No payment gateways configured
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Platform Statistics */}
+      <Card>
+        <h2 className="text-base font-bold text-gray-800 mb-3">Platform Statistics</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg">
+            <p className="text-xs text-blue-600 mb-1">Platform Status</p>
+            <p className="text-xl font-bold text-blue-800">Active</p>
+          </div>
+          <div className="p-3 bg-gradient-to-br from-green-50 to-green-100 rounded-lg">
+            <p className="text-xs text-green-600 mb-1">Database</p>
+            <p className="text-xl font-bold text-green-800">Connected</p>
+          </div>
+          <div className="p-3 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg">
+            <p className="text-xs text-purple-600 mb-1">System Version</p>
+            <p className="text-xl font-bold text-purple-800">v1.0.0</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Gateway Form Modal */}
+      {showGatewayForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="max-w-md w-full">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-gray-800">
+                {editingGateway ? 'Edit Payment Gateway' : 'Add Payment Gateway'}
+              </h2>
+              <button
+                onClick={resetForm}
+                className="text-gray-400 hover:text-gray-600 transition"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={editingGateway ? handleUpdateGateway : handleCreateGateway} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Gateway Name</label>
+                <input
+                  type="text"
+                  value={gatewayFormData.name}
+                  onChange={(e) => setGatewayFormData({ ...gatewayFormData, name: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="e.g., JazzCash, EasyPaisa"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Account Title</label>
+                <input
+                  type="text"
+                  value={gatewayFormData.accountTitle}
+                  onChange={(e) => setGatewayFormData({ ...gatewayFormData, accountTitle: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Account holder name"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Account Number</label>
+                <input
+                  type="text"
+                  value={gatewayFormData.accountNumber}
+                  onChange={(e) => setGatewayFormData({ ...gatewayFormData, accountNumber: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Account/wallet number"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Gateway Logo</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setGatewayFormData({ ...gatewayFormData, logo: e.target.files[0] })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                {editingGateway?.logo_url && !gatewayFormData.logo && (
+                  <p className="text-xs text-gray-500 mt-1">Current logo will be kept if not changed</p>
+                )}
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="isActive"
+                  checked={gatewayFormData.isActive}
+                  onChange={(e) => setGatewayFormData({ ...gatewayFormData, isActive: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="isActive" className="ml-2 text-xs text-gray-700">
+                  Active (users can see this gateway)
+                </label>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm rounded-lg transition disabled:opacity-50"
+                >
+                  {loading ? (editingGateway ? 'Updating...' : 'Creating...') : (editingGateway ? 'Update Gateway' : 'Create Gateway')}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-4 py-2 text-sm rounded-lg transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}
